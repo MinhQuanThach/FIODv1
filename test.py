@@ -1,16 +1,8 @@
-import os
-
 import torch, copy, cv2
 from types import SimpleNamespace
-from ultralytics import YOLO
 import wandb
-import matplotlib.pyplot as plt
-import os.path as osp
 from dataset.paired_cityscapes import PairedCityscapes
-from dataset.foggy_zurich import FoggyZurich
 from torch.utils.data import DataLoader
-import numpy as np
-from datetime import datetime
 import yaml
 
 
@@ -69,16 +61,16 @@ def test_model(args, model, yolo, FogPassFilter):
 
     # Dataset dictionaries for YOLO's .val()
     dataset_dict['CW'] = {
-        'path': '/kaggle/input/fiod-dataset/FIOD_dataset/data/CW',
+        'path': '/kaggle/input/fiod-full/FIOD_dataset/data/CW',
         'train': 'images/train',
         'val': 'images/val',
-        'names': {0: 'person', 1: 'bicycle', 2: 'car'}
+        'names': {0: 'person', 1: 'car'}
     }
     dataset_dict['SF'] = {
-        'path': '/kaggle/input/fiod-dataset/FIOD_dataset/data/SF',
+        'path': '/kaggle/input/fiod-full/FIOD_dataset/data/SF',
         'train': 'images/train',
         'val': 'images/val',
-        'names': {0: 'person', 1: 'bicycle', 2: 'car'}
+        'names': {0: 'person', 1: 'car'}
     }
 
     # For reference: {0: 'person', 1: 'rider', 2: 'car', 3: 'bicycle', 4: 'motorcycle', 5: 'bus', 6: 'truck', 7: 'train'}
