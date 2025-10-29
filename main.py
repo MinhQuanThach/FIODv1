@@ -84,15 +84,14 @@ def main():
 
     args = get_arguments()
 
-    yolo = YOLO("yolov8s.pt")
+    yolo = YOLO("cityscapes_finetuned.pt")
     yolo.to(args.gpu)
     yolo.model.args = SimpleNamespace(box=0.05, cls=0.5, dfl=1.5)
 
     # Initialize model
-    model = YOLO('yolov8s.pt').model
+    model = YOLO('cityscapes_finetuned.pt').model
 
     # load weights (strict=True will raise if any shape mismatches)
-    model.load_state_dict(torch.load('cityscapes_finetuned.pth'), strict=True)
     model.train()
     model.to(args.gpu)
 
