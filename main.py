@@ -17,7 +17,6 @@ from model.fogpassfilter import FogPassFilter_conv1, FogPassFilter_res1, FogPass
 from dataset.paired_cityscapes import PairedCityscapes
 from dataset.foggy_zurich import FoggyZurich
 from plot import plot_cw_sf_layer
-from test import convert_labels_to_ultralytics_format, test_model
 from utils.train_config import get_arguments
 from utils.optimisers import get_optimisers, get_lr_schedulers
 import wandb
@@ -84,14 +83,15 @@ def main():
 
     args = get_arguments()
 
-    yolo = YOLO("cityscapes_finetuned.pt")
+    yolo = YOLO("yolov8s.pt")
     yolo.to(args.gpu)
     yolo.model.args = SimpleNamespace(box=0.05, cls=0.5, dfl=1.5)
 
     # Initialize model
-    model = YOLO('cityscapes_finetuned.pt').model
+    model = YOLO('yolov8s.pt').model
 
     # load weights (strict=True will raise if any shape mismatches)
+    model.load_state_dict(torch.load('cityscapes_finetuned.pth'), strict=True)
     model.train()
     model.to(args.gpu)
 
@@ -120,16 +120,13 @@ def main():
     FogPassFilter2.to(args.gpu)
     paired_loss_fn = PairedFogPassFilterLoss(variant='cos', normalize=True).to(args.gpu)
 
-    all_factors = {
-        'layer0': {'CW': [], 'SF': []},
-        'layer1': {'CW': [], 'SF': []}
-    }
+    all_factors = {'CW': [], 'SF': []}
 
     # Data loaders
     cwsf_dataset = PairedCityscapes(args.data_dir, set=args.set, max_iters=args.num_steps * args.batch_size,
                                     img_size=args.img_size)
     cwsf_loader = data.DataLoader(
-        cwsf_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=True,
+        cwsf_dataset, batch_size=args.batch_size, drop_last=True, shuffle=True, num_workers=args.num_workers, pin_memory=True,
         collate_fn=cwsf_dataset.collate_fn
     )
 
@@ -197,59 +194,54 @@ def main():
             features_cw = {idx: features[idx][0] for idx in feature_layers}
             features_sf = {idx: features[idx][1] for idx in feature_layers}
 
-            fsm_weights = {'layer1': 0.5}
-            cw_features = {'layer1': features_cw[4]}
-            sf_features = {'layer1': features_sf[4]}
+            cw_features = features_cw[4]
+            sf_features = features_sf[4]
 
             total_fpf_loss = 0
 
-            for idx, layer in enumerate(fsm_weights):
 
-                fogpassfilter = FogPassFilter2
-                fogpassfilter_optimizer = FogPassFilter2_optimizer
+            fogpassfilter = FogPassFilter2
+            fogpassfilter_optimizer = FogPassFilter2_optimizer
 
-                fogpassfilter.train()
-                fogpassfilter_optimizer.zero_grad()
+            fogpassfilter.train()
+            fogpassfilter_optimizer.zero_grad()
 
-                sf_gram = [0] * args.batch_size
-                cw_gram = [0] * args.batch_size
+            sf_gram = [0] * args.batch_size
+            cw_gram = [0] * args.batch_size
 
-                fog_factor_sf = [0] * args.batch_size
-                fog_factor_cw = [0] * args.batch_size
+            fog_factor_sf = [0] * args.batch_size
+            fog_factor_cw = [0] * args.batch_size
 
-                for batch_idx in range(args.batch_size):
-                    sf_gram[batch_idx] = gram_matrix(sf_features[layer][batch_idx])
-                    cw_gram[batch_idx] = gram_matrix(cw_features[layer][batch_idx])
+            for batch_idx in range(args.batch_size):
+                sf_gram[batch_idx] = gram_matrix(sf_features[batch_idx])
+                cw_gram[batch_idx] = gram_matrix(cw_features[batch_idx])
 
-                    vector_sf_gram = sf_gram[batch_idx][torch.triu(torch.ones_like(sf_gram[batch_idx])) == 1]
-                    vector_cw_gram = cw_gram[batch_idx][torch.triu(torch.ones_like(cw_gram[batch_idx])) == 1]
+                vector_sf_gram = sf_gram[batch_idx][torch.triu(torch.ones_like(sf_gram[batch_idx])) == 1]
+                vector_cw_gram = cw_gram[batch_idx][torch.triu(torch.ones_like(cw_gram[batch_idx])) == 1]
 
-                    fog_factor_sf[batch_idx] = fogpassfilter(vector_sf_gram)
-                    fog_factor_cw[batch_idx] = fogpassfilter(vector_cw_gram)
+                fog_factor_sf[batch_idx] = fogpassfilter(vector_sf_gram)
+                fog_factor_cw[batch_idx] = fogpassfilter(vector_cw_gram)
 
-                    # For plotting
-                    # safe squeeze -> ensure shape (D,)
-                    emb_cw = fog_factor_cw[batch_idx].detach().cpu().squeeze()
-                    emb_sf = fog_factor_sf[batch_idx].detach().cpu().squeeze()
+                # For plotting
+                # safe squeeze -> ensure shape (D,)
+                emb_cw = fog_factor_cw[batch_idx].detach().cpu().squeeze()
+                emb_sf = fog_factor_sf[batch_idx].detach().cpu().squeeze()
 
-                    # choose layer key string consistent with your cw_features keys: 'layer0' or 'layer1'
-                    layer_key = 'layer1'
-                    all_factors[layer_key]['CW'].append(emb_cw.numpy())
-                    all_factors[layer_key]['SF'].append(emb_sf.numpy())
+                # choose layer key string consistent with your cw_features keys: 'layer0' or 'layer1'
+                all_factors['CW'].append(emb_cw.numpy())
+                all_factors['SF'].append(emb_sf.numpy())
 
-                emb_cw = torch.stack([e.squeeze(0) if e.dim() == 2 else e for e in fog_factor_cw], dim=0).to(
-                    args.gpu)  # (B, D)
-                emb_sf = torch.stack([e.squeeze(0) if e.dim() == 2 else e for e in fog_factor_sf], dim=0).to(
-                    args.gpu)  # (B, D)
+            emb_cw = torch.stack([e.squeeze(0) if e.dim() == 2 else e for e in fog_factor_cw], dim=0).to(args.gpu)  # (B, D)
+            emb_sf = torch.stack([e.squeeze(0) if e.dim() == 2 else e for e in fog_factor_sf], dim=0).to(args.gpu)  # (B, D)
 
-                fog_factor_embeddings = torch.cat([emb_cw, emb_sf], dim=0)  # (2B, D)
+            fog_factor_embeddings = torch.cat([emb_cw, emb_sf], dim=0)  # (2B, D)
 
-                B = emb_cw.size(0)
-                fog_factor_labels = torch.LongTensor([0] * B + [1] * B).to(args.gpu)
+            B = emb_cw.size(0)
+            fog_factor_labels = torch.LongTensor([0] * B + [1] * B).to(args.gpu)
 
-                # Compute loss
-                fog_pass_filter_loss = paired_loss_fn(emb_cw, emb_sf)
-                total_fpf_loss += fog_pass_filter_loss
+            # Compute loss
+            fog_pass_filter_loss = paired_loss_fn(emb_cw, emb_sf)
+            total_fpf_loss += fog_pass_filter_loss
 
             total_fpf_loss.backward()
 
@@ -284,46 +276,41 @@ def main():
                 det_sf_processed = yolo(sf_img, verbose=False)
                 # Consistency loss with matched IoU
                 if det_cw[0].numel() > 0 and det_sf[0].numel() > 0:
-                    boxes_cw = torch.cat([det_cw_processed[0].boxes.xyxy, det_cw_processed[0].boxes.conf[:, None]],
-                                         dim=1)
-                    boxes_sf = torch.cat([det_sf_processed[0].boxes.xyxy, det_sf_processed[0].boxes.conf[:, None]],
-                                         dim=1)
+                    boxes_cw = torch.cat([det_cw_processed[0].boxes.xyxy, det_cw_processed[0].boxes.conf[:, None]],dim=1)
+                    boxes_sf = torch.cat([det_sf_processed[0].boxes.xyxy, det_sf_processed[0].boxes.conf[:, None]],dim=1)
                     loss_con = 1 - compute_iou(boxes_cw, boxes_sf)  # Maximize IoU
                 else:
                     loss_con = 0
 
-                cw_features = {'layer1': features[4][0]}
-                sf_features = {'layer1': features[4][1]}
+                cw_features = features[4][0]
+                sf_features = features[4][1]
                 a_features, b_features = cw_features, sf_features
 
-                for idx, layer in enumerate(fsm_weights):
 
-                    fogpassfilter = FogPassFilter2
-                    fogpassfilter_optimizer = FogPassFilter2_optimizer
+                fogpassfilter = FogPassFilter2
+                fogpassfilter_optimizer = FogPassFilter2_optimizer
 
-                    fogpassfilter.eval()
-                    layer_fsm_loss = 0
+                fogpassfilter.eval()
+                layer_fsm_loss = 0
 
-                    for batch_idx in range(args.batch_size):
-                        a_gram = gram_matrix(a_features[layer][batch_idx])
-                        b_gram = gram_matrix(b_features[layer][batch_idx])
-                        _, _, ha, wa = a_features[layer].size()
-                        _, _, hb, wb = b_features[layer].size()
+                for batch_idx in range(args.batch_size):
+                    a_gram = gram_matrix(a_features[batch_idx])
+                    b_gram = gram_matrix(b_features[batch_idx])
+                    _, _, ha, wa = a_features.size()
+                    _, _, hb, wb = b_features.size()
 
-                        vector_a = a_gram[torch.triu(torch.ones_like(a_gram)) == 1]
-                        vector_b = b_gram[torch.triu(torch.ones_like(b_gram)) == 1]
+                    vector_a = a_gram[torch.triu(torch.ones_like(a_gram)) == 1]
+                    vector_b = b_gram[torch.triu(torch.ones_like(b_gram)) == 1]
 
-                        fog_factor_a = fogpassfilter(vector_a)
-                        fog_factor_b = fogpassfilter(vector_b)
-                        half = int(fog_factor_b.shape[0] / 2)
+                    fog_factor_a = fogpassfilter(vector_a)
+                    fog_factor_b = fogpassfilter(vector_b)
+                    half = int(fog_factor_b.shape[0] / 2)
 
-                        layer_fsm_loss += fsm_weights[layer] * torch.mean(
-                            (fog_factor_b / (hb * wb) - fog_factor_a / (ha * wa)) ** 2) / half
+                    layer_fsm_loss += 0.5 * torch.mean((fog_factor_b / (hb * wb) - fog_factor_a / (ha * wa)) ** 2) / half
 
-                    loss_fsm += layer_fsm_loss / args.batch_size
+                loss_fsm += layer_fsm_loss / args.batch_size
 
-                loss = (
-                                   loss_det_sf + loss_det_cw + args.lambda_fsm * loss_fsm + args.lambda_con * loss_con) / args.iter_size
+                loss = (loss_det_sf + loss_det_cw + args.lambda_fsm * loss_fsm + args.lambda_con * loss_con) / args.iter_size
                 if loss.requires_grad and loss != 0:
                     loss.backward()
 
@@ -359,10 +346,7 @@ def main():
 
         if i_iter % 1000 == 999:
             plot_cw_sf_layer(all_factors, out_file='layer1.png')
-            all_factors = {
-                'layer0': {'CW': [], 'SF': []},
-                'layer1': {'CW': [], 'SF': []}
-            }
+            all_factors = {'CW': [], 'SF': []}
 
     # Cleanup hooks
     for handle in handles:
