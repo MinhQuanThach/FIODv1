@@ -118,7 +118,10 @@ def main():
     FogPassFilter2_optimizer = torch.optim.Adam(FogPassFilter2.parameters(), lr=1e-4)
 
     FogPassFilter2.to(args.gpu)
-    paired_loss_fn = PairedFogPassFilterLoss(variant='cos', normalize=True).to(args.gpu)
+    fogpassfilter_loss = FogPassFilterLoss(margin=0.1)
+    # paired_loss_fn = PairedFogPassFilterLoss(variant='cos', normalize=True).to(args.gpu)
+    # ...
+    # fog_pass_filter_loss = paired_loss_fn(emb_cw, emb_sf)
 
     all_factors = {'CW': [], 'SF': []}
 
@@ -240,7 +243,7 @@ def main():
             fog_factor_labels = torch.LongTensor([0] * B + [1] * B).to(args.gpu)
 
             # Compute loss
-            fog_pass_filter_loss = paired_loss_fn(emb_cw, emb_sf)
+            fog_pass_filter_loss = fogpassfilter_loss(fog_factor_embeddings, fog_factor_labels)
             total_fpf_loss += fog_pass_filter_loss
 
             total_fpf_loss.backward()
