@@ -5,7 +5,7 @@ def get_arguments():
     args.batch_size = 4
     args.iter_size = 1
     args.num_workers = 2
-    args.data_dir = '/kaggle/input/fiod-full/FIOD_dataset/data'
+    args.data_dir = '/kaggle/input/datasets/minhqunthch/fiod-full-8class/FIOD_dataset/data'
     args.img_size = 640
     args.num_classes = 8  # Adjust based on your dataset
     args.num_steps = 1000

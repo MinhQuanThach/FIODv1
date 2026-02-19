@@ -165,10 +165,9 @@ def main():
         for opt in opts:
             opt.zero_grad()
 
-        FogPassFilter2_optimizer.zero_grad()
-
         for sub_i in range(args.iter_size):
             # Step 1: Train fog-pass filters
+            FogPassFilter2_optimizer.zero_grad()
 
             model.eval()
             for param in model.parameters():
@@ -243,13 +242,11 @@ def main():
             fog_factor_labels = torch.LongTensor([0] * B + [1] * B).to(args.gpu)
 
             # Compute loss
-            fog_pass_filter_loss = fogpassfilter_loss(fog_factor_embeddings, fog_factor_labels)
+            fog_pass_filter_loss = fogpassfilter_loss(fog_factor_embeddings, fog_factor_labels) * 1000
             total_fpf_loss += fog_pass_filter_loss
 
             total_fpf_loss.backward()
-
-            if i_iter < 5000:
-                FogPassFilter2_optimizer.step()
+            FogPassFilter2_optimizer.step()
 
             if i_iter >= 5000:
                 # Step 2: Train YOLO model
@@ -313,7 +310,7 @@ def main():
 
                 loss_fsm += layer_fsm_loss / args.batch_size
 
-                loss = (loss_det_sf + loss_det_cw + args.lambda_fsm * loss_fsm + args.lambda_con * loss_con) / args.iter_size
+                loss = (loss_det_sf + loss_det_cw + args.lambda_fsm * loss_fsm + args.lambda_con * loss_con) / args.iter_size #args.lambda_fsm=100, args.lambda_con=1
                 if loss.requires_grad and loss != 0:
                     loss.backward()
 
@@ -329,7 +326,6 @@ def main():
                     for opt in opts:
                         opt.step()
 
-                    FogPassFilter2_optimizer.step()
                     scheduler.step()
                 else:
                     print(f"Skipped backward at iter {i_iter}, sub {sub_i}: Zero loss (empty batch?)")
